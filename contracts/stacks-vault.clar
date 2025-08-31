@@ -99,3 +99,113 @@
     (<= (len category) MAX-CATEGORY-LENGTH)
   )
 )
+
+;; PUBLIC INTERFACE FUNCTIONS
+
+;; Register new digital content with cryptographic proof of ownership
+;; This function creates an immutable record on the Stacks blockchain,
+;; providing tamper-proof evidence of content creation and ownership
+(define-public (register-digital-asset
+    (asset-title (string-ascii 256))
+    (asset-description (string-ascii 1024))
+    (cryptographic-fingerprint (buff 32))
+    (media-category (string-ascii 64))
+  )
+  (let (
+      (new-vault-id (var-get content-sequence-id))
+      (current-block-height stacks-block-height)
+    )
+    ;; Comprehensive input validation - ensure data integrity before blockchain storage
+    (asserts!
+      (validate-string-input asset-title MIN-TITLE-LENGTH MAX-TITLE-LENGTH)
+      ERR-MALFORMED-INPUT
+    )
+    (asserts! (validate-string-input asset-description u0 MAX-DESCRIPTION-LENGTH)
+      ERR-MALFORMED-INPUT
+    )
+    (asserts! (validate-media-category media-category) ERR-MALFORMED-INPUT)
+    (asserts! (is-eq (len cryptographic-fingerprint) u32) ERR-MALFORMED-INPUT)
+    (asserts!
+      (is-none (map-get? fingerprint-index { cryptographic-fingerprint: cryptographic-fingerprint }))
+      ERR-DUPLICATE-CONTENT-HASH
+    )
+
+    ;; Create immutable content record in the vault
+    (map-set digital-content-vault { vault-id: new-vault-id } {
+      content-owner: tx-sender,
+      asset-title: asset-title,
+      asset-description: asset-description,
+      cryptographic-fingerprint: cryptographic-fingerprint,
+      media-category: media-category,
+      registration-block: current-block-height,
+      last-modified-block: current-block-height,
+      vault-status: true,
+    })
+
+    ;; Index the cryptographic fingerprint for fast duplicate detection
+    (map-set fingerprint-index { cryptographic-fingerprint: cryptographic-fingerprint } { vault-id: new-vault-id })
+
+    ;; Update the creator's portfolio statistics
+    (let ((existing-count (default-to u0
+        (get registered-count
+          (map-get? creator-portfolio { content-owner: tx-sender })
+        ))))
+      (map-set creator-portfolio { content-owner: tx-sender } { registered-count: (+ existing-count u1) })
+    )
+
+    ;; Advance the sequence counter for next registration
+    (var-set content-sequence-id (+ new-vault-id u1))
+
+    ;; Return the newly created vault ID
+    (ok new-vault-id)
+  )
+)
+
+;; Transfer content ownership between Stacks addresses
+;; Enables decentralized content trading and inheritance scenarios
+;; while maintaining complete ownership history on-chain
+(define-public (transfer-content-ownership
+    (vault-id uint)
+    (recipient principal)
+  )
+  (let (
+      (vault-record (unwrap! (map-get? digital-content-vault { vault-id: vault-id })
+        ERR-CONTENT-NOT-REGISTERED
+      ))
+      (current-owner (get content-owner vault-record))
+    )
+    ;; Input validation for vault ID
+    (asserts! (validate-vault-id vault-id) ERR-INVALID-VAULT-ID)
+
+    ;; Authorization check - only current owner can initiate transfers
+    (asserts! (is-eq tx-sender current-owner) ERR-UNAUTHORIZED-ACCESS)
+    (asserts! (not (is-eq current-owner recipient)) ERR-MALFORMED-INPUT)
+
+    ;; Execute ownership transfer with timestamp update
+    (map-set digital-content-vault { vault-id: vault-id }
+      (merge vault-record {
+        content-owner: recipient,
+        last-modified-block: stacks-block-height,
+      })
+    )
+
+    ;; Update portfolio statistics for both parties
+    (let (
+        (sender-count (default-to u0
+          (get registered-count
+            (map-get? creator-portfolio { content-owner: current-owner })
+          )))
+        (recipient-count (default-to u0
+          (get registered-count
+            (map-get? creator-portfolio { content-owner: recipient })
+          )))
+      )
+      ;; Decrement sender's portfolio count
+      (map-set creator-portfolio { content-owner: current-owner } { registered-count: (- sender-count u1) })
+      ;; Increment recipient's portfolio count
+      (map-set creator-portfolio { content-owner: recipient } { registered-count: (+ recipient-count u1) })
+    )
+
+    (ok true)
+  )
+)
