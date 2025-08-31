@@ -209,3 +209,80 @@
     (ok true)
   )
 )
+
+;; Update content metadata while preserving ownership and cryptographic proof
+;; Allows creators to refine descriptions and titles without affecting
+;; the core cryptographic fingerprint that proves content authenticity
+(define-public (update-asset-metadata
+    (vault-id uint)
+    (asset-title (string-ascii 256))
+    (asset-description (string-ascii 1024))
+  )
+  (let ((vault-record (unwrap! (map-get? digital-content-vault { vault-id: vault-id })
+      ERR-CONTENT-NOT-REGISTERED
+    )))
+    ;; Input validation
+    (asserts! (validate-vault-id vault-id) ERR-INVALID-VAULT-ID)
+    (asserts!
+      (validate-string-input asset-title MIN-TITLE-LENGTH MAX-TITLE-LENGTH)
+      ERR-MALFORMED-INPUT
+    )
+    (asserts! (validate-string-input asset-description u0 MAX-DESCRIPTION-LENGTH)
+      ERR-MALFORMED-INPUT
+    )
+
+    ;; Authorization check - only content owner can update metadata
+    (asserts! (is-eq tx-sender (get content-owner vault-record))
+      ERR-UNAUTHORIZED-ACCESS
+    )
+
+    ;; Update metadata while preserving cryptographic integrity
+    (map-set digital-content-vault { vault-id: vault-id }
+      (merge vault-record {
+        asset-title: asset-title,
+        asset-description: asset-description,
+        last-modified-block: stacks-block-height,
+      })
+    )
+
+    (ok true)
+  )
+)
+
+;; Archive content by setting inactive status
+;; Provides a way to logically remove content from active circulation
+;; without destroying the immutable ownership record on Stacks
+(define-public (archive-digital-content (vault-id uint))
+  (let ((vault-record (unwrap! (map-get? digital-content-vault { vault-id: vault-id })
+      ERR-CONTENT-NOT-REGISTERED
+    )))
+    ;; Input validation for vault ID
+    (asserts! (validate-vault-id vault-id) ERR-INVALID-VAULT-ID)
+
+    ;; Authorization check - only content owner can archive
+    (asserts! (is-eq tx-sender (get content-owner vault-record))
+      ERR-UNAUTHORIZED-ACCESS
+    )
+
+    ;; Set archive status while maintaining all other data
+    (map-set digital-content-vault { vault-id: vault-id }
+      (merge vault-record {
+        vault-status: false,
+        last-modified-block: stacks-block-height,
+      })
+    )
+
+    (ok true)
+  )
+)
+
+;; READ-ONLY QUERY FUNCTIONS
+
+;; Retrieve complete content record by vault ID
+;; Returns all metadata and ownership information for verification
+(define-read-only (get-vault-record (vault-id uint))
+  (if (validate-vault-id vault-id)
+    (map-get? digital-content-vault { vault-id: vault-id })
+    none
+  )
+)
