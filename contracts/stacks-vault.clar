@@ -286,3 +286,67 @@
     none
   )
 )
+
+;; Lookup content using its cryptographic fingerprint
+;; Enables verification of content authenticity using only the hash
+(define-read-only (lookup-by-fingerprint (cryptographic-fingerprint (buff 32)))
+  (if (is-eq (len cryptographic-fingerprint) u32)
+    (match (map-get? fingerprint-index { cryptographic-fingerprint: cryptographic-fingerprint })
+      index-record (map-get? digital-content-vault { vault-id: (get vault-id index-record) })
+      none
+    )
+    none
+  )
+)
+
+;; Verify ownership claims for any registered content
+;; Critical function for third-party verification of content ownership
+;; without requiring trust in external authorities
+(define-read-only (verify-content-ownership
+    (vault-id uint)
+    (alleged-owner principal)
+  )
+  (if (validate-vault-id vault-id)
+    (match (map-get? digital-content-vault { vault-id: vault-id })
+      vault-record (is-eq (get content-owner vault-record) alleged-owner)
+      false
+    )
+    false
+  )
+)
+
+;; Get creator's total registered content count
+;; Useful for portfolio analytics and creator verification
+(define-read-only (get-creator-portfolio-size (content-owner principal))
+  (default-to u0
+    (get registered-count
+      (map-get? creator-portfolio { content-owner: content-owner })
+    ))
+)
+
+;; Check if content is active and available
+;; Returns false for archived content or non-existent vault IDs
+(define-read-only (is-vault-active (vault-id uint))
+  (if (validate-vault-id vault-id)
+    (match (map-get? digital-content-vault { vault-id: vault-id })
+      vault-record (get vault-status vault-record)
+      false
+    )
+    false
+  )
+)
+
+;; Get the next available vault ID for registration
+;; Useful for frontend applications to predict the next content ID
+(define-read-only (get-next-vault-id)
+  (var-get content-sequence-id)
+)
+
+;; Validate that a cryptographic fingerprint is available for registration
+;; Prevents duplicate content registration attempts
+(define-read-only (is-fingerprint-available (cryptographic-fingerprint (buff 32)))
+  (if (is-eq (len cryptographic-fingerprint) u32)
+    (is-none (map-get? fingerprint-index { cryptographic-fingerprint: cryptographic-fingerprint }))
+    false
+  )
+)
